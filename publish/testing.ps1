@@ -52,8 +52,30 @@ $repoRoot = Split-Path -Parent $scriptDir
 
 # Auto-detect project identifiers so this script works for any repo
 Write-Host "Auto-detecting project files..."
+
+# Build list of submodule absolute paths to ignore when scanning
+$submoduleAbs = @()
+$gitmodulesPath = Join-Path $repoRoot '.gitmodules'
+if (Test-Path $gitmodulesPath) {
+    $gm = Get-Content $gitmodulesPath -ErrorAction SilentlyContinue
+    foreach ($line in $gm) {
+        if ($line -match '^\s*path\s*=\s*(.+)$') {
+            $p = $matches[1].Trim()
+            $abs = (Join-Path $repoRoot $p).Replace('/','\\')
+            $submoduleAbs += $abs
+        }
+    }
+}
+Write-Host "Excluding submodules: $($submoduleAbs -join ', ')"
+
 # Find a solution file (if present)
-$sln = Get-ChildItem -Path $repoRoot -Filter *.sln -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } | Select-Object -First 1
+$slnCandidates = Get-ChildItem -Path $repoRoot -Filter *.sln -Recurse -ErrorAction SilentlyContinue
+$sln = $slnCandidates | Where-Object {
+    $full = $_.FullName
+    if ($full -match '\\(bin|obj)\\') { return $false }
+    foreach ($sm in $submoduleAbs) { if ($full.StartsWith($sm, [System.StringComparison]::InvariantCultureIgnoreCase)) { return $false } }
+    return $true
+} | Select-Object -First 1
 if ($sln) {
     $SolutionName = $sln.Name
     Write-Host "Found solution: $SolutionName"
@@ -63,7 +85,13 @@ if ($sln) {
 }
 
 # Find a project file (.csproj)
-$csprojFile = Get-ChildItem -Path $repoRoot -Filter *.csproj -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } | Select-Object -First 1
+$csprojCandidates = Get-ChildItem -Path $repoRoot -Filter *.csproj -Recurse -ErrorAction SilentlyContinue
+$csprojFile = $csprojCandidates | Where-Object {
+    $full = $_.FullName
+    if ($full -match '\\(bin|obj)\\') { return $false }
+    foreach ($sm in $submoduleAbs) { if ($full.StartsWith($sm, [System.StringComparison]::InvariantCultureIgnoreCase)) { return $false } }
+    return $true
+} | Select-Object -First 1
 if (-not $csprojFile) {
     Write-Error "No .csproj file found in repository."
     exit 1
