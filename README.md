@@ -1,0 +1,1 @@
+Collection of scripts for speeding up pushing new testing and releases for my FFXIV plugins
