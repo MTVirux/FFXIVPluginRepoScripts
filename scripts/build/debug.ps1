@@ -89,6 +89,7 @@ Write-Host "Updating $CsprojName at $csprojPath..."
 $csproj = Get-Content $csprojPath -Raw
 $csproj = $csproj -replace '<FileVersion>[\d\.]+</FileVersion>', "<FileVersion>$version</FileVersion>"
 $csproj = $csproj -replace '<AssemblyVersion>[\d\.]+</AssemblyVersion>', "<AssemblyVersion>$version</AssemblyVersion>"
+$csproj = $csproj -replace '<Version>[\d\.]+</Version>', "<Version>$version</Version>"
 Set-Content -Path $csprojPath -Value $csproj -NoNewline
 
 $projectJsonPath = if (Test-Path (Join-Path $ProjectDirFull $JsonName)) { Join-Path $ProjectDirFull $JsonName } else { Join-Path $repoRoot $JsonName }

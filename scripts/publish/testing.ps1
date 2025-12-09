@@ -124,6 +124,7 @@ Write-Host "Updating $CsprojName at $csprojPath..."
 $csproj = Get-Content $csprojPath -Raw
 $csproj = $csproj -replace '<FileVersion>[\d\.]+</FileVersion>', "<FileVersion>$version</FileVersion>"
 $csproj = $csproj -replace '<AssemblyVersion>[\d\.]+</AssemblyVersion>', "<AssemblyVersion>$version</AssemblyVersion>"
+$csproj = $csproj -replace '<Version>[\d\.]+</Version>', "<Version>$version</Version>"
 Set-Content -Path $csprojPath -Value $csproj -NoNewline
 
 # Determine project json path and update
@@ -143,6 +144,7 @@ if ($repoJson -isnot [System.Collections.IEnumerable] -or $repoJson -is [string]
     $repoJson = @($repoJson)
 }
 $timestamp = [int][double]::Parse((Get-Date -UFormat %s))
+$repoJson[0].TestingAssemblyVersion = $version
 $repoJson[0].LastUpdate = $timestamp
 $repoJsonJson = $repoJson | ConvertTo-Json -Depth 10
 $trimmed = $repoJsonJson.Trim()
