@@ -16,6 +16,22 @@ Write-Host "Building with version: $version"
 $scriptDir = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $scriptDir
 
+# Load build lock helper and acquire a repository-wide build lock so two builds
+# (debug/release) cannot run at the same time.
+$lockScript = Join-Path $PSScriptRoot 'BuildLock.ps1'
+if (Test-Path $lockScript) { . $lockScript } else { Write-Warning "Build lock helper not found: $lockScript" }
+
+if (Get-Command Acquire-BuildLock -ErrorAction SilentlyContinue) {
+    if (-not (Acquire-BuildLock -RepoRoot $repoRoot -TimeoutSeconds 300)) {
+        Write-Error "Could not acquire build lock after timeout. Another build may be running."
+        exit 1
+    }
+} else {
+    Write-Warning "Acquire-BuildLock not available; continuing without lock."
+}
+
+try {
+
 # Auto-detect project identifiers so this script works for any repo
 Write-Host "Auto-detecting project files..."
 
@@ -127,3 +143,6 @@ Write-Host "Reverting version changes..."
 git checkout -- $csprojPath $projectJsonPath $repoJsonPath
 
 Write-Host "Build complete! Version: $version"
+} finally {
+    if (Get-Command Release-BuildLock -ErrorAction SilentlyContinue) { Release-BuildLock }
+}
