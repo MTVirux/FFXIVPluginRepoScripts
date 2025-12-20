@@ -1,3 +1,8 @@
+# Allow passing a custom version (e.g. -Version 1.2.3.4 or -Version testing_1.2.3.4)
+param(
+    [string]$Version
+)
+
 # Get the latest testing tag from the repository
 git fetch --tags
 
@@ -13,34 +18,47 @@ if ($localCommit -ne $remoteCommit) {
 
 Write-Host "Local branch is up to date with remote."
 
-$latestTag = git tag -l "testing_*" | ForEach-Object {
-    $version = $_ -replace '^testing_', ''
-    [PSCustomObject]@{
-        Tag = $_
-        Version = [Version]$version
+if ($PSBoundParameters.ContainsKey('Version') -and $Version) {
+    # Use the user-provided version. Accept either 'testing_1.2.3.4' or '1.2.3.4'.
+    if ($Version -match '^testing_') {
+        $newTag = $Version
+        $version = $Version -replace '^testing_', ''
+    } else {
+        $version = $Version
+        $newTag = "testing_$version"
     }
-} | Sort-Object Version -Descending | Select-Object -First 1 -ExpandProperty Tag
-
-if (-not $latestTag) {
-    Write-Host "No existing testing tags found. Creating initial tag testing_1.0.0.0"
-    $newTag = "testing_1.0.0.0"
-    $version = "1.0.0.0"
+    Write-Host "Using supplied version: $version"
+    Write-Host "New testing tag: $newTag"
 } else {
-    Write-Host "Latest testing tag: $latestTag"
-    
-    # Remove the "testing_" prefix to get the version
-    $version = $latestTag -replace '^testing_', ''
-    
-    # Split the version by periods
-    $parts = $version -split '\.'
-    
-    # Increment the last portion
-    $lastIndex = $parts.Length - 1
-    $parts[$lastIndex] = [int]$parts[$lastIndex] + 1
-    
-    # Join back together
-    $version = $parts -join '.'
-    $newTag = "testing_$version"
+    $latestTag = git tag -l "testing_*" | ForEach-Object {
+        $version = $_ -replace '^testing_', ''
+        [PSCustomObject]@{
+            Tag = $_
+            Version = [Version]$version
+        }
+    } | Sort-Object Version -Descending | Select-Object -First 1 -ExpandProperty Tag
+
+    if (-not $latestTag) {
+        Write-Host "No existing testing tags found. Creating initial tag testing_1.0.0.0"
+        $newTag = "testing_1.0.0.0"
+        $version = "1.0.0.0"
+    } else {
+        Write-Host "Latest testing tag: $latestTag"
+        
+        # Remove the "testing_" prefix to get the version
+        $version = $latestTag -replace '^testing_', ''
+        
+        # Split the version by periods
+        $parts = $version -split '\.'
+        
+        # Increment the last portion
+        $lastIndex = $parts.Length - 1
+        $parts[$lastIndex] = [int]$parts[$lastIndex] + 1
+        
+        # Join back together
+        $version = $parts -join '.'
+        $newTag = "testing_$version"
+    }
 }
 
 Write-Host "New testing tag: $newTag"
