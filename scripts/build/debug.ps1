@@ -1,13 +1,24 @@
-# Get the latest tag from the remote repository (excluding testing tags)
-git fetch --tags
-$latestTag = git tag -l | Where-Object { $_ -notmatch '^testing_' } | Sort-Object -Descending | Select-Object -First 1
+# Allow passing a custom version (e.g. -Version 1.2.3.4)
+param(
+    [string]$Version
+)
 
-if (-not $latestTag) {
-    Write-Host "No existing tags found. Using version 1.0.0.0"
-    $version = "1.0.0.0"
+# Determine the version to use
+if ($PSBoundParameters.ContainsKey('Version') -and $Version) {
+    $version = $Version
+    Write-Host "Using supplied version: $version"
 } else {
-    Write-Host "Latest tag: $latestTag"
-    $version = $latestTag
+    # Get the latest tag from the remote repository (excluding testing tags)
+    git fetch --tags
+    $latestTag = git tag -l | Where-Object { $_ -notmatch '^testing_' } | Sort-Object -Descending | Select-Object -First 1
+
+    if (-not $latestTag) {
+        Write-Host "No existing tags found. Using version 1.0.0.0"
+        $version = "1.0.0.0"
+    } else {
+        Write-Host "Latest tag: $latestTag"
+        $version = $latestTag
+    }
 }
 
 Write-Host "Building with version: $version"
@@ -103,6 +114,14 @@ if (-not $JsonName) { $JsonName = 'ProjectInfo.json'; Write-Host "No project jso
 $csprojPath = $csprojFile.FullName
 Write-Host "Updating $CsprojName at $csprojPath..."
 $csproj = Get-Content $csprojPath -Raw
+# Save original csproj version values so we can restore them later
+$origFileVersion = ([regex]::Match($csproj,'<FileVersion>([^<]+)</FileVersion>').Groups[1].Value)
+$origAssemblyVersion = ([regex]::Match($csproj,'<AssemblyVersion>([^<]+)</AssemblyVersion>').Groups[1].Value)
+$origVersion = ([regex]::Match($csproj,'<Version>([^<]+)</Version>').Groups[1].Value)
+if (-not $origFileVersion) { $origFileVersion = '1.0.0.0' }
+if (-not $origAssemblyVersion) { $origAssemblyVersion = '1.0.0.0' }
+if (-not $origVersion) { $origVersion = '1.0.0.0' }
+
 $csproj = $csproj -replace '<FileVersion>[\d\.]+</FileVersion>', "<FileVersion>$version</FileVersion>"
 $csproj = $csproj -replace '<AssemblyVersion>[\d\.]+</AssemblyVersion>', "<AssemblyVersion>$version</AssemblyVersion>"
 $csproj = $csproj -replace '<Version>[\d\.]+</Version>', "<Version>$version</Version>"
@@ -111,6 +130,9 @@ Set-Content -Path $csprojPath -Value $csproj -NoNewline
 $projectJsonPath = if (Test-Path (Join-Path $ProjectDirFull $JsonName)) { Join-Path $ProjectDirFull $JsonName } else { Join-Path $repoRoot $JsonName }
 Write-Host "Updating $JsonName at $projectJsonPath..."
 $projectJson = Get-Content $projectJsonPath -Raw | ConvertFrom-Json
+# Save original project json assembly version
+$origProjectJsonAssembly = $projectJson.AssemblyVersion
+if (-not $origProjectJsonAssembly) { $origProjectJsonAssembly = '1.0.0.0' }
 $projectJson.AssemblyVersion = $version
 $projectJson | ConvertTo-Json -Depth 10 | Set-Content -Path $projectJsonPath
 
@@ -138,9 +160,20 @@ Write-Host "Building in Debug mode..."
 if ($SolutionName) { $slnPath = Join-Path $repoRoot $SolutionName } else { $slnPath = $csprojPath }
 dotnet build $slnPath -c Debug
 
-# Revert the version changes
+# Revert only version changes (not the entire file, to preserve local uncommitted changes)
 Write-Host "Reverting version changes..."
-git checkout -- $csprojPath $projectJsonPath $repoJsonPath
+$csproj = Get-Content $csprojPath -Raw
+$csproj = $csproj -replace '<FileVersion>[^<]+</FileVersion>', "<FileVersion>$origFileVersion</FileVersion>"
+$csproj = $csproj -replace '<AssemblyVersion>[^<]+</AssemblyVersion>', "<AssemblyVersion>$origAssemblyVersion</AssemblyVersion>"
+$csproj = $csproj -replace '<Version>[^<]+</Version>', "<Version>$origVersion</Version>"
+Set-Content -Path $csprojPath -Value $csproj -NoNewline
+
+$projectJson = Get-Content $projectJsonPath -Raw | ConvertFrom-Json
+$projectJson.AssemblyVersion = $origProjectJsonAssembly
+$projectJson | ConvertTo-Json -Depth 10 | Set-Content -Path $projectJsonPath
+
+# Restore repo.json from git to preserve its original state
+git checkout -- $repoJsonPath
 
 Write-Host "Build complete! Version: $version"
 } finally {

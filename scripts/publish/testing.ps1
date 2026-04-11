@@ -27,6 +27,20 @@ if ($PSBoundParameters.ContainsKey('Version') -and $Version) {
         $version = $Version
         $newTag = "testing_$version"
     }
+
+    # Validate the version format
+    if ($version -notmatch '^\d+(\.\d+)*$') {
+        Write-Error "Invalid version format '$version'. Expected numeric format (e.g. 1.2.3.4)."
+        exit 1
+    }
+
+    # Ensure we do not overwrite an existing tag
+    $existing = git tag -l $newTag
+    if ($existing) {
+        Write-Error "Tag '$newTag' already exists. Aborting to avoid overwriting existing testing tag."
+        exit 1
+    }
+
     Write-Host "Using supplied version: $version"
     Write-Host "New testing tag: $newTag"
 } else {
@@ -178,8 +192,8 @@ git add $csprojPath $projectJsonPath $repoJsonPath
 git commit -m "[CI] Update testing version to $version"
 
 # Push the commit first
-Write-Host "Pushing version changes to main..."
-git push origin main
+Write-Host "Pushing version changes to $currentBranch..."
+git push origin $currentBranch
 
 # Verify the commit is on remote with retry logic
 Write-Host "Verifying commit on remote..."
@@ -188,9 +202,9 @@ $attempt = 0
 $verified = $false
 
 while ($attempt -lt $maxAttempts) {
-    git fetch origin main
+    git fetch origin $currentBranch
     $localCommit = git rev-parse HEAD
-    $remoteCommit = git rev-parse origin/main
+    $remoteCommit = git rev-parse "origin/$currentBranch"
     
     if ($localCommit -eq $remoteCommit) {
         $verified = $true
