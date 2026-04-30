@@ -3,6 +3,12 @@ git fetch --tags
 
 # Check if local branch is up to date with remote
 $currentBranch = git rev-parse --abbrev-ref HEAD
+
+if ($currentBranch -ne 'main' -and $currentBranch -ne 'master') {
+    Write-Error "Release builds must be published from 'main' or 'master'. Current branch: '$currentBranch'."
+    exit 1
+}
+
 $localCommit = git rev-parse "@"
 $remoteCommit = git rev-parse "@{u}"
 
