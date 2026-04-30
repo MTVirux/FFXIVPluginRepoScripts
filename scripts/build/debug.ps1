@@ -1,24 +1,13 @@
-# Allow passing a custom version (e.g. -Version 1.2.3.4)
-param(
-    [string]$Version
-)
+# Get the latest tag from the remote repository (excluding testing tags)
+git fetch --tags
+$latestTag = git tag -l | Where-Object { $_ -notmatch '^testing_' } | Sort-Object -Descending | Select-Object -First 1
 
-# Determine the version to use
-if ($PSBoundParameters.ContainsKey('Version') -and $Version) {
-    $version = $Version
-    Write-Host "Using supplied version: $version"
+if (-not $latestTag) {
+    Write-Host "No existing tags found. Using version 1.0.0.0"
+    $version = "1.0.0.0"
 } else {
-    # Get the latest tag from the remote repository (excluding testing tags)
-    git fetch --tags
-    $latestTag = git tag -l | Where-Object { $_ -notmatch '^testing_' } | Sort-Object -Descending | Select-Object -First 1
-
-    if (-not $latestTag) {
-        Write-Host "No existing tags found. Using version 1.0.0.0"
-        $version = "1.0.0.0"
-    } else {
-        Write-Host "Latest tag: $latestTag"
-        $version = $latestTag
-    }
+    Write-Host "Latest tag: $latestTag"
+    $version = $latestTag
 }
 
 Write-Host "Building with version: $version"
