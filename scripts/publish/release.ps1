@@ -38,101 +38,16 @@ Write-Host "Using version from testing tag: $latestTestingTag"
 $scriptDir = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $scriptDir
 
-# Auto-detect project identifiers so this script works for any repo
-Write-Host "Auto-detecting project files..."
-
-# Build list of submodule absolute paths to ignore when scanning
-$submoduleAbs = @()
-$gitmodulesPath = Join-Path $repoRoot '.gitmodules'
-if (Test-Path $gitmodulesPath) {
-    $gm = Get-Content $gitmodulesPath -ErrorAction SilentlyContinue
-    foreach ($line in $gm) {
-        if ($line -match '^\s*path\s*=\s*(.+)$') {
-            $p = $matches[1].Trim()
-            $abs = (Join-Path $repoRoot $p).Replace('/','\\')
-            $submoduleAbs += $abs
-        }
-    }
-}
-Write-Host "Excluding submodules: $($submoduleAbs -join ', ')"
-
-# Find a solution file (if present)
-$slnCandidates = Get-ChildItem -Path $repoRoot -Filter *.sln -Recurse -ErrorAction SilentlyContinue
-$sln = $slnCandidates | Where-Object {
-    $full = $_.FullName
-    if ($full -match '\\(bin|obj)\\') { return $false }
-    foreach ($sm in $submoduleAbs) { if ($full.StartsWith($sm, [System.StringComparison]::InvariantCultureIgnoreCase)) { return $false } }
-    return $true
-} | Select-Object -First 1
-if ($sln) {
-    $SolutionName = $sln.Name
-    Write-Host "Found solution: $SolutionName"
-} else {
-    $SolutionName = $null
-    Write-Host "No .sln found; will update project file directly."
-}
-
-# Find a project file (.csproj)
-$csprojCandidates = Get-ChildItem -Path $repoRoot -Filter *.csproj -Recurse -ErrorAction SilentlyContinue
-$csprojFile = $csprojCandidates | Where-Object {
-    $full = $_.FullName
-    if ($full -match '\\(bin|obj)\\') { return $false }
-    foreach ($sm in $submoduleAbs) { if ($full.StartsWith($sm, [System.StringComparison]::InvariantCultureIgnoreCase)) { return $false } }
-    return $true
-} | Select-Object -First 1
-if (-not $csprojFile) {
-    Write-Error "No .csproj file found in repository."
-    exit 1
-}
-$CsprojName = $csprojFile.Name
-$ProjectDirFull = $csprojFile.Directory.FullName
-$ProjectDir = Split-Path $ProjectDirFull -Leaf
-Write-Host "Using project dir: $ProjectDir; csproj: $CsprojName"
-
-# Find a project JSON file (look in project folder then repo root) that contains AssemblyVersion
-$JsonName = $null
-$projJsons = Get-ChildItem -Path $ProjectDirFull -Filter *.json -ErrorAction SilentlyContinue
-foreach ($j in $projJsons) {
-    $content = Get-Content $j.FullName -Raw -ErrorAction SilentlyContinue
-    if ($content -and $content -match 'AssemblyVersion') { $JsonName = $j.Name; break }
-}
-if (-not $JsonName) {
-    $rootJsons = Get-ChildItem -Path $repoRoot -Filter *.json -ErrorAction SilentlyContinue
-    foreach ($j in $rootJsons) {
-        if ($j.Name -ieq 'repo.json') { continue }
-        $content = Get-Content $j.FullName -Raw -ErrorAction SilentlyContinue
-        if ($content -and $content -match 'AssemblyVersion') { $JsonName = $j.Name; break }
-    }
-}
-if (-not $JsonName) { $JsonName = 'ProjectInfo.json'; Write-Host "No project json found; defaulting to $JsonName" } else { Write-Host "Using project json: $JsonName" }
-
-# Use detected absolute csproj path
-$csprojPath = $csprojFile.FullName
-Write-Host "Updating $CsprojName at $csprojPath..."
-$csproj = Get-Content $csprojPath -Raw
-$csproj = $csproj -replace '<FileVersion>[\d\.]+</FileVersion>', "<FileVersion>$newTag</FileVersion>"
-$csproj = $csproj -replace '<AssemblyVersion>[\d\.]+</AssemblyVersion>', "<AssemblyVersion>$newTag</AssemblyVersion>"
-$csproj = $csproj -replace '<Version>[\d\.]+</Version>', "<Version>$newTag</Version>"
-Set-Content -Path $csprojPath -Value $csproj -NoNewline
-
-# Determine project json path and update
-$projectJsonPath = if (Test-Path (Join-Path $ProjectDirFull $JsonName)) { Join-Path $ProjectDirFull $JsonName } else { Join-Path $repoRoot $JsonName }
-Write-Host "Updating $JsonName at $projectJsonPath..."
-$projectJson = Get-Content $projectJsonPath -Raw | ConvertFrom-Json
-$projectJson.AssemblyVersion = $newTag
-$projectJson | ConvertTo-Json -Depth 10 | Set-Content -Path $projectJsonPath
-
-# Update LastUpdate in repo.json
 Write-Host "Updating repo.json..."
 $repoJsonPath = Join-Path $repoRoot "repo.json"
 $repoJsonRaw = Get-Content $repoJsonPath -Raw
 $repoJson = $repoJsonRaw | ConvertFrom-Json
-# Ensure repoJson is always an array
 if ($repoJson -isnot [System.Collections.IEnumerable] -or $repoJson -is [string]) {
     $repoJson = @($repoJson)
 }
 $timestamp = [int][double]::Parse((Get-Date -UFormat %s))
 $repoJson[0].AssemblyVersion = $newTag
+$repoJson[0].TestingAssemblyVersion = $newTag
 $repoJson[0].LastUpdate = $timestamp
 $repoJsonJson = $repoJson | ConvertTo-Json -Depth 10
 $trimmed = $repoJsonJson.Trim()
@@ -144,12 +59,12 @@ Set-Content -Path $repoJsonPath -Value $repoJsonJson
 
 # Commit the version changes
 Write-Host "Committing version changes..."
-git add $csprojPath $projectJsonPath $repoJsonPath
+git add $repoJsonPath
 git commit -m "[CI] Update release version to $newTag"
 
 # Push the commit first
-Write-Host "Pushing version changes to main..."
-git push origin main
+Write-Host "Pushing version changes to $currentBranch..."
+git push origin $currentBranch
 
 # Verify the commit is on remote with retry logic
 Write-Host "Verifying commit on remote..."
@@ -158,9 +73,9 @@ $attempt = 0
 $verified = $false
 
 while ($attempt -lt $maxAttempts) {
-    git fetch origin main
+    git fetch origin $currentBranch
     $localCommit = git rev-parse HEAD
-    $remoteCommit = git rev-parse origin/main
+    $remoteCommit = git rev-parse "origin/$currentBranch"
     
     if ($localCommit -eq $remoteCommit) {
         $verified = $true
